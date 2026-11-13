@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>RPD Studio · Removable Partial Denture Design Lab</title>
+  <meta name="description" content="Survey a 3D cast, classify it with Kennedy and Applegate, design an RPD and get it checked. Built with PixiJS 3D." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <div id="stage"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">RPD<span>Studio</span></div>
+      <div class="sub">Mandibular cast · survey · design · check</div>
+    </div>
+    <div id="kennedyBadge" class="badge">—</div>
+  </header>
+
+  <div class="views" id="views">
+    <button data-view="occlusal" class="on">Occlusal</button>
+    <button data-view="front">Front</button>
+    <button data-view="right">Right</button>
+    <button data-view="left">Left</button>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <aside class="sheet" id="sheet">
+    <nav class="tabs" id="tabs">
+      <button data-tab="case" class="on"><b>1</b>Case</button>
+      <button data-tab="survey"><b>2</b>Survey</button>
+      <button data-tab="design"><b>3</b>Design</button>
+      <button data-tab="check"><b>4</b>Check</button>
+    </nav>
+
+    <section class="pane on" data-pane="case">
+      <p class="hint">Pick a case, or tap teeth on the cast to extract or restore them.</p>
+      <div class="chips" id="presets"></div>
+      <label class="toggle"><input type="checkbox" id="replaceM2" /> <span>Replace missing second molars</span></label>
+      <div class="card" id="classCard"></div>
+    </section>
+
+    <section class="pane" data-pane="survey">
+      <p class="hint">The analyzing rod stays vertical. Tilt the table to choose the path of insertion, then tap a tooth to gauge its undercut.</p>
+      <div class="slider">
+        <div class="row"><span>Anteroposterior tilt</span><output id="apOut">0°</output></div>
+        <input type="range" id="ap" min="-15" max="15" step="1" value="0" />
+      </div>
+      <div class="slider">
+        <div class="row"><span>Lateral tilt</span><output id="latOut">0°</output></div>
+        <input type="range" id="lat" min="-15" max="15" step="1" value="0" />
+      </div>
+      <div class="chips small" id="gauges">
+        <span class="lbl">Undercut gauge</span>
+        <button data-g="0.25" class="on">0.25 mm</button>
+        <button data-g="0.5">0.50 mm</button>
+        <button data-g="0.75">0.75 mm</button>
+      </div>
+      <div class="chips small">
+        <label class="toggle"><input type="checkbox" id="showMap" checked /> <span>Undercut map</span></label>
+        <label class="toggle"><input type="checkbox" id="showLines" checked /> <span>Survey lines</span></label>
+        <button id="zeroTilt" class="ghost">Zero tilt</button>
+      </div>
+      <div class="legend">
+        <span><i style="background:#c9d3b0"></i>&lt;0.25</span><span><i style="background:#f3c138"></i>0.25–0.5</span><span><i style="background:#f39a6b"></i>0.5–0.75</span><span><i style="background:#e0507e"></i>&gt;0.75 mm</span><span><i style="background:#221d1f"></i>survey line</span><span><i style="background:#7a3fd1"></i>gauge</span>
+      </div>
+      <div class="card" id="measureCard">Tap a tooth to measure.</div>
+    </section>
+
+    <section class="pane" data-pane="design">
+      <div class="chips tools" id="tools">
+        <button data-tool="rest" class="on">Rest</button>
+        <button data-tool="akers">Akers clasp</button>
+        <button data-tool="rpi">RPI</button>
+        <button data-tool="ww">Wrought wire</button>
+        <button data-tool="erase">Eraser</button>
+      </div>
+      <p class="hint" id="toolHint"></p>
+      <div class="chips small" id="connectors">
+        <span class="lbl">Major connector</span>
+        <button data-conn="lingual-bar" class="on">Lingual bar</button>
+        <button data-conn="lingual-plate">Lingual plate</button>
+        <button data-conn="">None</button>
+      </div>
+      <div class="slider">
+        <div class="row"><span>Lingual sulcus depth (margin to floor of mouth)</span><output id="sulcusOut">9 mm</output></div>
+        <input type="range" id="sulcus" min="4" max="14" step="1" value="9" />
+      </div>
+      <div class="chips small">
+        <button id="suggest" class="primary">Suggest textbook design</button>
+        <button id="clearDesign" class="ghost">Clear</button>
+        <label class="toggle"><input type="checkbox" id="showBase" checked /> <span>Denture base</span></label>
+      </div>
+    </section>
+
+    <section class="pane" data-pane="check">
+      <div class="score" id="score"></div>
+      <ul class="rules" id="rules"></ul>
+    </section>
+
+    <footer class="foot">Teaching model: textbook rules (McCracken-style), simplified anatomy. Not for clinical use. · Built by Swapnil Agrawal (BDS intern) with PixiJS 3D</footer>
+  </aside>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
