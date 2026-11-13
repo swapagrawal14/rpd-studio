@@ -411,8 +411,8 @@ function renderCheckUI() {
   const scored = items.filter((x) => x.status !== 'info');
   const pass = scored.filter((x) => x.status === 'pass').length;
   const pct = scored.length ? Math.round((pass / scored.length) * 100) : 0;
-  const col = pct >= 85 ? 'var(--green)' : pct >= 50 ? 'var(--amber)' : 'var(--red)';
-  $('#score').innerHTML = `<div class="ring" style="background: conic-gradient(${col} ${pct * 3.6}deg, rgba(255,255,255,.08) 0)"><span style="background:var(--bg1);width:50px;height:50px;border-radius:50%;display:grid;place-items:center">${pct}</span></div>
+  const col = pct >= 85 ? 'var(--sage-d)' : pct >= 50 ? 'var(--mustard)' : 'var(--pink)';
+  $('#score').innerHTML = `<div class="ring" style="background: conic-gradient(${col} ${pct * 3.6}deg, var(--paper) 0)"><span>${pct}</span></div>
     <div class="txt"><b>${pass} of ${scored.length} checks pass</b>${cls.label || ''}${fw.results.length ? ` · ${fw.results.length} clasp${fw.results.length > 1 ? 's' : ''}` : ''}</div>`;
   const icon = { pass: '✓', warn: '!', fail: '✕', info: 'i' };
   $('#rules').innerHTML = items.map((x) => `<li class="${x.status}"><span class="ic">${icon[x.status]}</span><div><b>${x.title}</b><p>${x.detail}</p></div></li>`).join('');
