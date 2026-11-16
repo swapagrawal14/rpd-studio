@@ -15,7 +15,7 @@
   <header class="topbar">
     <div class="brand">
       <div class="logo">RPD<span>Studio</span></div>
-      <div class="sub">Mandibular cast · survey · design · check</div>
+      <div class="sub" id="archSub">Mandibular cast · survey · design · check</div>
     </div>
     <div id="kennedyBadge" class="badge">—</div>
   </header>
@@ -38,8 +38,19 @@
     </nav>
 
     <section class="pane on" data-pane="case">
+      <div class="chips small seg" id="arches">
+        <span class="lbl">Arch</span>
+        <button data-arch="mandibular" class="on">Mandibular</button>
+        <button data-arch="maxillary">Maxillary</button>
+      </div>
       <p class="hint">Pick a case, or tap teeth on the cast to extract or restore them.</p>
       <div class="chips" id="presets"></div>
+      <div class="chips small" id="torusRow" hidden>
+        <span class="lbl">Palatal torus</span>
+        <button data-torus="none" class="on">None</button>
+        <button data-torus="mid">Mid-palate</button>
+        <button data-torus="posterior">Reaches posterior limit</button>
+      </div>
       <label class="toggle"><input type="checkbox" id="replaceM2" /> <span>Replace missing second molars</span></label>
       <div class="card" id="classCard"></div>
     </section>
@@ -80,13 +91,8 @@
         <button data-tool="erase">Eraser</button>
       </div>
       <p class="hint" id="toolHint"></p>
-      <div class="chips small" id="connectors">
-        <span class="lbl">Major connector</span>
-        <button data-conn="lingual-bar" class="on">Lingual bar</button>
-        <button data-conn="lingual-plate">Lingual plate</button>
-        <button data-conn="">None</button>
-      </div>
-      <div class="slider">
+      <div class="chips small" id="connectors"></div>
+      <div class="slider" id="sulcusRow">
         <div class="row"><span>Lingual sulcus depth (margin to floor of mouth)</span><output id="sulcusOut">9 mm</output></div>
         <input type="range" id="sulcus" min="4" max="14" step="1" value="9" />
       </div>

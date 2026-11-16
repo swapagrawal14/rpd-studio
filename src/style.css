@@ -15,6 +15,7 @@
   --sheet-w: 390px;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body {
   margin: 0; height: 100%; overflow: hidden;
   background: var(--paper) url('/leaves.svg') center / cover no-repeat;
@@ -34,7 +35,7 @@ html, body {
 .badge::after { content: ''; position: absolute; inset: 0; background-image: radial-gradient(rgba(34,29,31,.18) 1px, transparent 1.3px); background-size: 5px 5px; pointer-events: none; }
 
 button { font: inherit; }
-.views { position: fixed; left: 20px; bottom: 20px; display: flex; gap: 8px; }
+.views { position: fixed; left: 20px; bottom: 20px; display: flex; gap: 8px; z-index: 2; }
 .views button, .chips button, .tabs button {
   color: var(--ink); background: var(--paper2); border: var(--line); border-radius: 12px; padding: 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
   box-shadow: 2px 2px 0 var(--ink); transition: transform 0.08s, box-shadow 0.08s, background 0.15s;
@@ -92,12 +93,14 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 
 @media (max-width: 820px) {
   :root { --sheet-h: 47vh; --sheet-w: 0px; }
+  @supports (height: 1dvh) { :root { --sheet-h: 47dvh; } }
   .topbar { right: 0; padding: 12px 14px; }
   .logo { font-size: 22px; }
   .sub { font-size: 11px; }
   .badge { font-size: 12px; padding: 6px 10px; }
   .sheet { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; height: var(--sheet-h); border-radius: 20px; box-shadow: 4px 4px 0 var(--ink); }
-  .views { left: 50%; transform: translateX(-50%); bottom: calc(var(--sheet-h) + 18px); }
+  /* main.js pins the row into the gap it leaves between the 3D view and the sheet */
+  .views { left: 50%; transform: translateX(-50%); bottom: calc(var(--sheet-h) + 18px); gap: 6px; flex-wrap: nowrap; white-space: nowrap; }
   .views button { padding: 5px 9px; font-size: 12px; }
   .toast { left: 50%; top: 66px; }
   .tabs { padding: 10px 10px 8px; }

@@ -1,7 +1,13 @@
 // RPD framework components, their geometry, and the design check.
 import { v3, add, sub, mul, norm, cross, dot, len, lerp, smooth, tube, gridMesh, computeNormals, mergeMeshes } from './geom.js';
-import { archFrame, toothS, toothFrame, toCast, SPECS, TOOTH_S, gumAt, OCC_Y, NJ } from './anatomy.js';
+import { archFrame, toothS, toothFrame, toCast, SPECS, TOOTH_S, gumAt, OCC_Y, NJ, SIDE, isMax, palateSetup, palateY, PALATE, PAL_JOIN } from './anatomy.js';
 import { posInfo, fdi, ARCH_LEN, TOOTH_NAMES } from './kennedy.js';
+
+export const CONNECTORS = {
+  mandibular: [['lingual-bar', 'Lingual bar'], ['lingual-plate', 'Lingual plate']],
+  maxillary: [['palatal-strap', 'Palatal strap'], ['ap-strap', 'AP strap'], ['palatal-plate', 'Palatal plate'], ['u-shaped', 'U-shaped']],
+};
+export const CONNECTOR_NAMES = Object.fromEntries([...CONNECTORS.mandibular, ...CONNECTORS.maxillary]);
 
 export const TIP_DEPTH = { akers: 0.25, rpi: 0.25, ww: 0.5 };
 export const CLASP_NAMES = { akers: 'Akers (circumferential) clasp', rpi: 'RPI system', ww: 'Wrought-wire combination clasp' };
@@ -57,9 +63,13 @@ function ellipsoid(center, ax, rad, seg = 14) {
 function colOf(theta) { return Math.round(((theta % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2) * NJ) % NJ; }
 const SIDE_THETA = { mesial: Math.PI, distal: 0 };
 
+// Maxillary canine: cingulum rest (prominent, well-inclined cingulum), not an incisal rest.
+const cingulumRest = (type) => type === 'canine' && isMax();
+
 function restPoint(fr, side, type) {
   const sx = side === 'distal' ? 1 : -1;
   const a = fr.spec.md / 2, h = fr.spec.h;
+  if (cingulumRest(type)) return toCast(fr, v3(sx * 0.35, fr.spec.h * 0.4, -fr.spec.bl / 2 * 0.98));
   if (type === 'canine') return toCast(fr, v3(sx * a * 0.42, h + 0.75, -0.2));
   return toCast(fr, v3(sx * a * 0.6, h + 0.55, 0));
 }
@@ -69,6 +79,7 @@ function restMesh(fr, side) {
   const c = restPoint(fr, side, type);
   const sx = side === 'distal' ? 1 : -1;
   const tx = mul(fr.t, sx);
+  if (cingulumRest(type)) return ellipsoid(c, [fr.t, fr.up, fr.b], [1.8, 0.85, 0.75]);
   if (type === 'canine') return ellipsoid(c, [fr.t, fr.up, fr.b], [1.3, 0.55, 1.5]);
   const w = type === 'molar' ? 2.1 : 1.7;
   return ellipsoid(add(c, mul(tx, -0.3)), [fr.t, fr.up, fr.b], [1.5, 0.5, w]);
@@ -99,6 +110,8 @@ export function gumBuccalAt(s, y, missing) {
   return y < -12 ? pts[0][0] : pts[3][0];
 }
 const archPt = (s, n, y) => { const f = archFrame(s); return add(add(f.p, mul(f.b, n)), v3(0, y, 0)); };
+/** Point on the palate surface (maxillary), offset n across the arch at s, lifted off the tissue. */
+const palPt = (s, n, lift = 0) => { const q = archPt(s, n, 0); return v3(q.x, palateY(q.x, q.z) + lift, q.z); };
 
 export const BAR = { top: -4.2, bottom: -8.8 };
 
@@ -110,6 +123,8 @@ export function buildFramework(state, ctx) {
   const results = []; // per clasp: achieved tip depth etc.
   const restPts = []; // {i, side, pos}
   const minorStarts = [];
+  const minorPal = []; // maxillary: where each minor connector meets the palate
+  if (isMax()) palateSetup(missing);
 
   // rests (from rest components and clasps)
   const restSet = new Map();
@@ -129,6 +144,26 @@ export function buildFramework(state, ctx) {
     const s = toothS(i);
     const sEmb = s + (s >= 0 ? 1 : -1) * sx * (a + 0.2);
     const yb = (BAR.top + BAR.bottom) / 2 + 1;
+    if (isMax()) {
+      // down the palatal embrasure (or straight off a cingulum rest), across the gingiva, onto the palate
+      const sC = cingulumRest(fr.spec.type) ? s : sEmb;
+      const g = gumAt(sC, missing);
+      const start = cingulumRest(fr.spec.type)
+        ? [pos, toCast(fr, v3(0, h * 0.18, -b * 1.12))]
+        : [pos, toCast(fr, v3(sx * a * 0.92, h * 0.85, -b * 0.45)), toCast(fr, v3(sx * a * 1.0, h * 0.4, -b * 0.85)), toCast(fr, v3(sx * a * 1.0, 0.2, -b * 1.05))];
+      const pts = [
+        ...start,
+        archPt(sC, -g.W - 1.0 - 0.55, g.top - 2.6 + 0.35),
+        palPt(sC, -(g.W + PAL_JOIN.n + 0.4), 0.6),
+        palPt(sC, -(0.75 * g.W + 4), 0.6),
+        palPt(sC, -(0.75 * g.W + MAX_MARGIN + 0.8), 0.6),
+      ];
+      metal.push(tube(smoothPath(pts, 2), (t) => 0.85 - 0.1 * t, { seg: 8, flatten: 0.75 }));
+      minorStarts.push(sEmb);
+      const end = pts[pts.length - 1];
+      minorPal.push({ s: sC, x: end.x, z: end.z });
+      continue;
+    }
     const pts = [
       pos,
       toCast(fr, v3(sx * a * 0.92, h * 0.85, -b * 0.45)),
@@ -249,20 +284,33 @@ export function buildFramework(state, ctx) {
     let sMin = Math.min(...ss.map((s, k) => s - widths[k])) - 0.6;
     let sMax = Math.max(...ss.map((s, k) => s + widths[k])) + 0.6;
     const end = TOOTH_S[7] + SPECS[7].md / 2 + 6;
-    if (sp.distalRight) sMin = -end;
-    if (sp.distalLeft) sMax = end;
+    // distal extensions run back over the retromolar pad / tuberosity on their own side
+    for (const [flag, sign] of [[sp.distalRight, SIDE.right], [sp.distalLeft, -SIDE.right]]) {
+      if (!flag) continue;
+      if (sign < 0) sMin = -end; else sMax = end;
+    }
     saddles.push({ sMin, sMax, span: sp });
     acrylic.push(saddleMesh(sMin, sMax, missing));
   }
 
   // major connector
-  let connRange = null;
+  let connRange = null, conn = null;
+  if (isMax()) {
+    if (connector && components.length) {
+      conn = palatalConnector(connector, { missing, saddles, minorPal });
+      if (conn) metal.push(...conn.meshes);
+    }
+    return { metal: mergeMeshes(metal), wire: wire.length ? mergeMeshes(wire) : null, acrylic: acrylic.length ? mergeMeshes(acrylic) : null, results, restPts, saddles, connRange, conn };
+  }
   if (connector && components.length) {
     let lo = Infinity, hi = -Infinity;
     for (const s of minorStarts) { lo = Math.min(lo, s); hi = Math.max(hi, s); }
     for (const sd of saddles) {
-      if (sd.span.distalRight) lo = Math.min(lo, sd.sMax - 9);
-      else if (sd.span.distalLeft) hi = Math.max(hi, sd.sMin + 9);
+      // distal extension: run the connector 9 mm into the saddle from its mesial end
+      if (sd.span.distalRight || sd.span.distalLeft) {
+        if (sd.sMin + sd.sMax < 0) lo = Math.min(lo, sd.sMax - 9);
+        else hi = Math.max(hi, sd.sMin + 9);
+      }
       else { lo = Math.min(lo, sd.sMin + 1); hi = Math.max(hi, sd.sMax - 1); }
     }
     for (const r of results) { const s = toothS(r.c.tooth); lo = Math.min(lo, s - 4); hi = Math.max(hi, s + 4); }
@@ -306,11 +354,12 @@ function saddleMesh(sMin, sMax, missing) {
   for (let k = 0; k <= N; k++) {
     const s = sMin + ((sMax - sMin) * k) / N;
     const { top, W } = gumAt(s, missing);
+    const yL = isMax() ? top - 4.4 : BAR.top - 1.4; // maxilla: flange stops where the palate begins
     const prof = [
-      [-W - 2.3, BAR.top - 1.4], [-W - 1.5, top - 2.8], [-W * 0.85, top + 0.0], [-W * 0.3, top + 0.95], [0, top + 1.05],
+      [-W - 2.3, yL], [-W - 1.5, top - 2.8], [-W * 0.85, top + 0.0], [-W * 0.3, top + 0.95], [0, top + 1.05],
       [W * 0.3, top + 0.95], [W * 0.85, top + 0.0], [W + 1.6, top - 2.8], [W + 2.5, top - 5.5],
       // inner (tissue) surface back
-      [W + 1.9, top - 5.5], [W + 0.9, top - 2.6], [0, top + 0.15], [-W - 0.9, top - 2.6], [-W - 1.7, BAR.top - 1.4],
+      [W + 1.9, top - 5.5], [W + 0.9, top - 2.6], [0, top + 0.15], [-W - 0.9, top - 2.6], [-W - 1.7, yL],
     ];
     rows.push(prof.map(([n, y]) => archPt(s, n, y)));
   }
@@ -353,6 +402,188 @@ function plateMesh(lo, hi, missing) {
     rows.push(prof.map(([n, y]) => archPt(s, n, y)));
   }
   return gridMesh(rows, { closeCols: true });
+}
+
+// ---------- palatal major connectors (maxillary) ----------
+export const MAX_MARGIN = 6; // mm: borders kept this far from the palatal gingival margins of standing teeth
+export const STRAP_MIN = 8; // mm: minimum anteroposterior width of a palatal strap
+const BAR_W = 7; // mm: lateral (longitudinal) parts of the AP strap and the U-shaped connector
+
+// Border line on one side of the palate: MAX_MARGIN from the margin beside teeth, ~3 mm (tucked under
+// the saddle) along edentulous ridges. `extra` moves it further towards the midline.
+function borderCurve(sign, missing, sEnd, extra = 0) {
+  const pts = [];
+  for (let s = 0; s <= sEnd + 1e-6; s += 0.25) {
+    const ss = sign * s;
+    const f = archFrame(ss);
+    const g = gumAt(ss, missing);
+    const c = 3 + (MAX_MARGIN - 3) * g.pf;
+    const p = add(f.p, mul(f.b, -(0.75 * g.W + c + extra)));
+    pts.push({ x: Math.max(0, p.x * sign), z: p.z });
+  }
+  return pts;
+}
+function curveX(curve, z) {
+  if (z >= curve[0].z) return 0;
+  for (let k = 1; k < curve.length; k++) {
+    const a = curve[k - 1], b = curve[k];
+    if ((a.z - z) * (b.z - z) <= 0) return a.x + (b.x - a.x) * ((z - a.z) / (b.z - a.z || 1));
+  }
+  return curve[curve.length - 1].x;
+}
+
+function palSheet(zA, zB, xl, xr, lift, th) {
+  const zs = [];
+  const n = Math.max(3, Math.ceil((zA - zB) / 0.45));
+  for (let k = 0; k <= n; k++) zs.push(zA - ((zA - zB) * k) / n);
+  const NC = 26;
+  const rows = zs.map((z) => {
+    const L = xl(z), R = Math.max(xl(z), xr(z));
+    const bot = [], top = [];
+    for (let c = 0; c <= NC; c++) {
+      const x = L + ((R - L) * c) / NC;
+      const y = palateY(x, z) + lift;
+      const edge = smooth(0, 2.2, Math.min(x - L, R - x)) * smooth(0, 1.2, Math.min(z - zB, zA - z) + 0.4);
+      bot.push(v3(x, y, z));
+      top.push(v3(x, y + th * (0.3 + 0.7 * edge), z));
+    }
+    return [...bot, ...top.reverse()];
+  });
+  let g = gridMesh(rows, { closeCols: true });
+  const k = (Math.floor(rows.length / 2) * rows[0].length + Math.round(NC * 1.5)) * 3; // a top-surface vertex
+  if (g.normals[k + 1] < 0) g = gridMesh(rows, { closeCols: true, flip: true });
+  return g;
+}
+
+/**
+ * Builds a palatal major connector. Returns its meshes plus the facts the check needs: the
+ * anteroposterior extent of each part, the strap width and whether any part crosses a torus.
+ */
+export function palatalConnector(kind, { missing, saddles, minorPal }) {
+  const pal = palateSetup(missing);
+  const sEnd = pal.sEnd;
+  const outer = { p: borderCurve(1, missing, sEnd), n: borderCurve(-1, missing, sEnd) };
+  const inner = { p: borderCurve(1, missing, sEnd, BAR_W), n: borderCurve(-1, missing, sEnd, BAR_W) };
+  const zTop = Math.min(outer.p[0].z, outer.n[0].z) - 0.3;
+  const zPost = pal.zPost;
+  const clampZ = (z) => Math.max(zPost, Math.min(zTop, z));
+  const full = { xl: (z) => -curveX(outer.n, z), xr: (z) => curveX(outer.p, z) };
+  const barR = { xl: (z) => -curveX(outer.n, z), xr: (z) => -curveX(inner.n, z) };
+  const barL = { xl: (z) => curveX(inner.p, z), xr: (z) => curveX(outer.p, z) };
+
+  // anteroposterior positions the connector has to reach: minor connectors and saddles
+  const minorZ = minorPal.map((m) => m.z);
+  const keyZ = [...minorZ];
+  for (const sd of saddles) {
+    const zz = [];
+    for (let k = 0; k <= 8; k++) zz.push(archFrame(sd.sMin + ((sd.sMax - sd.sMin) * k) / 8).p.z);
+    const ext = sd.span.distalRight || sd.span.distalLeft;
+    const zMax = Math.max(...zz);
+    if (ext) keyZ.push(zMax, zMax - 10); else keyZ.push(Math.min(...zz), zMax);
+  }
+  if (!keyZ.length) return null;
+  const zHi = clampZ(Math.max(...keyZ) + 1.5), zLo = clampZ(Math.min(...keyZ) - 1.5);
+
+  const pieces = [];
+  let width = null, merged = false;
+  if (kind === 'palatal-plate') {
+    pieces.push({ zA: zTop, zB: zPost, ...full, lift: 0.22 });
+  } else if (kind === 'palatal-strap') {
+    let zA = zHi, zB = zLo;
+    if (zA - zB < STRAP_MIN) { const c = (zA + zB) / 2; zA = c + STRAP_MIN / 2; zB = c - STRAP_MIN / 2; }
+    if (zA > zTop) { zB -= zA - zTop; zA = zTop; }
+    if (zB < zPost) { zA += zPost - zB; zB = zPost; }
+    zA = Math.min(zA, zTop);
+    width = zA - zB;
+    pieces.push({ zA, zB, ...full, lift: 0.24 });
+  } else if (kind === 'ap-strap') {
+    let zAnt = clampZ(Math.max(...minorZ, zPost + 2 * STRAP_MIN) + 2);
+    // a mid-palatal torus: slide the anterior strap forward (within the palate) so its back edge
+    // clears the bulge and the strap rings round it instead of resting on it
+    const tor = pal.torus;
+    if (tor && zAnt - STRAP_MIN < tor.range[1] && zAnt > tor.range[0]) zAnt = Math.min(zTop, Math.max(zAnt, tor.range[1] + STRAP_MIN + 0.5));
+    const ant = [zAnt - STRAP_MIN, zAnt], post = [zPost, zPost + STRAP_MIN];
+    if (ant[0] - post[1] < 8) {
+      merged = true; // too little room for an open centre: it becomes one broad strap
+      pieces.push({ zA: zAnt, zB: zPost, ...full, lift: 0.24 });
+    } else {
+      pieces.push({ zA: ant[1], zB: ant[0], ...full, lift: 0.24 });
+      pieces.push({ zA: post[1], zB: post[0], ...full, lift: 0.24 });
+      pieces.push({ zA: ant[0] + 2, zB: post[1] - 2, ...barR, lift: 0.17 });
+      pieces.push({ zA: ant[0] + 2, zB: post[1] - 2, ...barL, lift: 0.17 });
+    }
+  } else if (kind === 'u-shaped') {
+    const zU = zLo;
+    pieces.push({ zA: zTop, zB: zU, ...barR, lift: 0.2 });
+    pieces.push({ zA: zTop, zB: zU, ...barL, lift: 0.2 });
+  } else return null;
+
+  const meshes = pieces.map((p) => palSheet(p.zA, p.zB, p.xl, p.xr, p.lift, 0.75));
+  // torus overlap: does any part of the metal lie over the bony bulge?
+  let torusConflict = false;
+  const t = pal.torus;
+  if (t) {
+    for (const p of pieces) {
+      for (let z = Math.min(p.zA, t.range[1]); z >= Math.max(p.zB, t.range[0]); z -= 0.5) {
+        const half = t.rx * Math.sqrt(Math.max(0, 1 - ((z - t.zc) / t.rz) ** 2)) * 0.8;
+        if (half > 0.5 && p.xl(z) < half && p.xr(z) > -half) { torusConflict = true; break; }
+      }
+      if (torusConflict) break;
+    }
+  }
+  return { kind, meshes, pieces: pieces.map((p) => ({ zA: p.zA, zB: p.zB })), width, merged, torusConflict, zPost };
+}
+
+/**
+ * Textbook choice of maxillary major connector (McCracken / Carr & Brown):
+ * Class I: AP strap or palatal plate; plate when only anterior teeth remain.
+ * Class II: AP strap; plate when the extension side keeps only anterior teeth.
+ * Class III: palatal strap for short posterior tooth-borne spaces; AP strap for long or anterior spaces.
+ * Class IV: AP strap; palatal plate for a long anterior span.
+ * U-shaped: only when a torus reaches the posterior limit (or posterior coverage is impossible).
+ */
+export function palatalAdvice(cls, topo) {
+  if (!cls.kennedy) return { best: [], why: '' };
+  const ext = topo.filter((t) => t.distalExt);
+  const termAnterior = ext.some((t) => posInfo(t.i).num <= 3);
+  const longSpan = cls.spans.some((s) => s.teeth.length >= 3);
+  const anteriorSpace = cls.spans.some((s) => s.teeth.some((i) => posInfo(i).num <= 3));
+  let best, why;
+  if (cls.kennedy === 'I') {
+    best = termAnterior ? ['palatal-plate', 'ap-strap'] : ['ap-strap', 'palatal-plate'];
+    why = termAnterior
+      ? 'Class I with only anterior teeth standing: a complete palatal plate takes support from the whole hard palate for both extensions.'
+      : 'Class I: an AP strap (or a palatal plate) is rigid and spreads the load of both distal extensions over the palate.';
+  } else if (cls.kennedy === 'II') {
+    best = termAnterior ? ['palatal-plate', 'ap-strap'] : ['ap-strap', 'palatal-plate'];
+    why = termAnterior
+      ? 'Class II with only anterior teeth on the extension side: a palatal plate gives the most support.'
+      : 'Class II: an AP strap joins the extension to the tooth-borne side rigidly, with palatal support behind the saddle.';
+  } else if (cls.kennedy === 'III') {
+    best = anteriorSpace || longSpan ? ['ap-strap', 'palatal-plate'] : ['palatal-strap', 'ap-strap'];
+    why = anteriorSpace || longSpan
+      ? 'Class III with a long or anterior space: an AP strap reaches both ends of the arch without covering the whole palate.'
+      : 'Class III with short posterior spaces is tooth-borne: a single broad palatal strap is rigid enough and covers little tissue.';
+  } else {
+    const n = cls.spans[0].teeth.length;
+    best = n >= 6 ? ['palatal-plate', 'ap-strap'] : ['ap-strap', 'palatal-plate'];
+    why = n >= 6
+      ? 'Class IV with a long anterior span: a palatal plate resists the rotation of the anterior saddle best.'
+      : 'Class IV: an AP strap (or a plate) gives a rigid ring with an anterior strap behind the replaced teeth.';
+  }
+  if (PALATE.torus === 'mid') {
+    best = ['ap-strap', ...best.filter((c) => c !== 'ap-strap' && c !== 'palatal-plate')];
+    why += ' With a mid-palatal torus the AP strap rings round it, leaving the torus uncovered.';
+  } else if (PALATE.torus === 'posterior') {
+    best = ['u-shaped'];
+    why = 'The torus reaches the posterior limit, so no posterior strap can cross it: this is where a U-shaped connector is indicated. Keep it broad and well supported by rests.';
+  }
+  return { best, why };
+}
+
+export function suggestConnector(state, ctx) {
+  if (!isMax()) return state.sulcus < 8 ? 'lingual-plate' : 'lingual-bar';
+  return palatalAdvice(ctx.cls, ctx.topo).best[0] || 'ap-strap';
 }
 
 // ---------- fulcrum line + design check ----------
@@ -466,7 +697,24 @@ export function checkDesign(state, ctx, fw) {
   }
 
   // 7. major connector
-  if (!state.connector) push('fail', 'No major connector', 'Join both sides of the arch with a lingual bar or a lingual plate.');
+  if (isMax()) {
+    const conn = state.connector;
+    const adv = palatalAdvice(cls, topo);
+    const nm = (c) => CONNECTOR_NAMES[c];
+    const bestTxt = adv.best.map(nm).join(' or ');
+    if (!conn) push('fail', 'No major connector', 'Join both sides of the arch with a palatal connector: strap, AP strap or plate.');
+    else if (fw.conn && fw.conn.torusConflict) push('fail', `${nm(conn)} crosses the torus`, `A torus is hard, thinly covered and can’t be compressed, so metal over it rocks and ulcerates the mucosa. Go round it (${bestTxt}) or plan its removal.`);
+    else if (adv.best.includes(conn)) push('pass', `${nm(conn)}: textbook choice for Class ${cls.kennedy}`, adv.why);
+    else if (conn === 'u-shaped') push('warn', 'U-shaped connector: avoid unless indicated', `Least rigid palatal connector: it flexes, lets distal-extension saddles move and runs close to the gingival margins of the anterior teeth. Keep it for a torus that reaches the posterior limit. Here: ${bestTxt}.`);
+    else if (conn === 'palatal-strap' && ['I', 'II'].includes(cls.kennedy)) push('warn', 'A single palatal strap is weak support for a distal extension', `It gives little rigidity or palatal support for a tissue-borne saddle. ${adv.why}`);
+    else if (conn === 'palatal-plate' && cls.kennedy === 'III') push('warn', 'More palate covered than this case needs', `${adv.why} A plate is not wrong, but it covers more tissue (taste, speech, comfort).`);
+    else push('warn', `${nm(conn)} works, but ${bestTxt} is the textbook pick`, adv.why);
+    if (conn && fw.conn) {
+      const w = fw.conn.width ? ` Strap is ${fw.conn.width.toFixed(0)} mm wide (at least ${STRAP_MIN} mm).` : '';
+      const m = fw.conn.merged ? ' The two straps are so close they merge into one broad strap.' : '';
+      push('pass', 'Borders clear of the gingival margins', `Kept ${MAX_MARGIN} mm from the palatal gingival margins of standing teeth, posterior border just in front of the vibrating line.${w}${m}`);
+    }
+  } else if (!state.connector) push('fail', 'No major connector', 'Join both sides of the arch with a lingual bar or a lingual plate.');
   else if (state.connector === 'lingual-bar' && state.sulcus < 8) push('fail', 'Lingual bar needs about 8 mm of depth', `Measured ${state.sulcus} mm from gingival margin to floor of mouth. Use a lingual plate.`);
   else if (state.connector === 'lingual-bar') push('pass', 'Lingual bar fits', `${state.sulcus} mm of lingual depth, bar kept clear of the gingival margins.`);
   else push('pass', 'Lingual plate', state.sulcus < 8 ? 'Right call for a shallow lingual sulcus.' : 'Fine, though a bar would also fit at this depth. A plate earns its place for splinting or planned incisor loss.');

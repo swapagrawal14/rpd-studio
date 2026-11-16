@@ -3,14 +3,16 @@ import {
   AmbientLight, Container3D, CylinderGeometry, DirectionalLight, FlatMaterial, Geometry3D, Material3D, Mesh3D, SphereGeometry, View3D, srgbToLinear,
 } from '@pixi/3d';
 import { OrbitCamera, ToonMaterial, OutlinePass } from '@pixi/3d/extras';
-import { classify, PRESETS, presetMissing, fdi, posInfo, TOOTH_NAMES, ARCH_LEN } from './kennedy.js';
-import { buildTooth, buildGingiva, buildBase, toothFrame, toCast, archFrame, SPECS, OCC_Y } from './anatomy.js';
+import { classify, PRESETS, presetMissing, fdi, posInfo, TOOTH_NAMES, ARCH_LEN, ARCH, ARCH_LABEL } from './kennedy.js';
+import { buildTooth, buildGingiva, buildBase, toothFrame, toCast, archFrame, SPECS, OCC_Y, setArch, PALATE, SIDE } from './anatomy.js';
 import { surveyTooth, surveyLine, gaugeLine, undercutColors } from './survey.js';
-import { topology, defaultRestSide, buildFramework, checkDesign, suggestDesign, CLASP_NAMES, TIP_DEPTH } from './design.js';
+import { topology, defaultRestSide, buildFramework, checkDesign, suggestDesign, suggestConnector, CONNECTORS, CLASP_NAMES, TIP_DEPTH } from './design.js';
 import { v3, add, sub, mul, tube, mergeMeshes, tiltRotate } from './geom.js';
 
 // ---------------- state ----------------
 const state = {
+  arch: 'mandibular',
+  torus: 'none',
   tab: 'case',
   missing: presetMissing('Class I'),
   replaceM2: false,
@@ -94,6 +96,7 @@ function setGeo(mesh, g, colors) {
 
 // static: stone base and surveyor table
 const baseMesh = new Mesh3D({ geometry: geo(buildBase()), material: mats.stone, parent: cast, receiveShadow: true });
+let lastTap = null; // { i, tab }: which tooth the last tap landed on (used by the tap test)
 new Mesh3D({ geometry: new CylinderGeometry({ radiusTop: 46, radiusBottom: 46, height: 3, radialSegments: 64 }), material: mats.table, position: { x: 0, y: -24.6, z: -4 }, parent: cast, receiveShadow: false });
 new Mesh3D({ geometry: new SphereGeometry({ radius: 7 }), material: mats.table, position: { x: 0, y: -31, z: -4 }, parent: world });
 new Mesh3D({ geometry: new CylinderGeometry({ radiusTop: 4, radiusBottom: 9, height: 40 }), material: mats.table, position: { x: 0, y: -55, z: -4 }, parent: world });
@@ -152,37 +155,61 @@ callout.visible = false;
 // ---------------- layout + camera ----------------
 let orbit = null;
 const target = { x: 0, y: 0, z: -4 };
+const isPhone = () => window.innerWidth <= 820;
+const VIEW_BAR = 46; // px reserved between the 3D view and the sheet on phones for the view buttons
 function viewRect() {
   const W = window.innerWidth, H = window.innerHeight;
-  if (W <= 820) return { x: 0, y: 0, w: W, h: Math.round(H * 0.54) };
+  if (isPhone()) {
+    // the 3D view stops above the sheet, so nothing is drawn (or tapped) behind it
+    const top = document.getElementById('sheet').getBoundingClientRect().top || H * 0.54;
+    return { x: 0, y: 0, w: W, h: Math.max(160, Math.round(top - VIEW_BAR)) };
+  }
   return { x: 0, y: 0, w: W - 380, h: H };
 }
+let VR = { x: 0, y: 0, w: 1, h: 1 };
 function layout() {
   const r = viewRect();
+  VR = r;
   view.setSize(r.w, r.h);
   view.position.set(r.x, r.y);
   view.hitArea = null;
+  const views = document.getElementById('views');
+  if (isPhone()) { views.style.top = `${r.h + 7}px`; views.style.bottom = 'auto'; }
+  else { views.style.top = ''; views.style.bottom = ''; }
 }
 layout();
 window.addEventListener('resize', layout);
 
+// Camera stops. 'right' and 'left' are the patient's sides. The maxillary occlusal view looks from
+// behind the teeth-up cast, so it reads like a textbook maxillary diagram (incisors at the top,
+// patient's right on the viewer's left).
 const VIEWS = {
   occlusal: { x: 0, y: 118, z: 34 },
   front: { x: 0, y: 34, z: 118 },
   right: { x: -112, y: 46, z: 10 },
   left: { x: 112, y: 46, z: 10 },
 };
+function viewPos(name) {
+  const v = { ...VIEWS[name] };
+  if (name === 'right' || name === 'left') v.x = Math.abs(v.x) * (name === 'right' ? SIDE.right : -SIDE.right);
+  if (name === 'occlusal' && state.arch === 'maxillary') { v.y = 124; v.z = -30; }
+  // narrow (phone) views: step back so the whole arch fits across
+  const k = Math.min(1.6, Math.max(1, 1.2 / (VR.w / VR.h)));
+  return { x: target.x + (v.x - target.x) * k, y: target.y + (v.y - target.y) * k, z: target.z + (v.z - target.z) * k };
+}
+let currentView = 'occlusal';
 function makeOrbit() {
   orbit = new OrbitCamera({ view, target, enableDamping: true, minDistance: 45, maxDistance: 260, autoUpdate: false });
 }
-cam.position.set(VIEWS.occlusal.x, VIEWS.occlusal.y, VIEWS.occlusal.z);
+{ const v0 = viewPos('occlusal'); cam.position.set(v0.x, v0.y, v0.z); }
 cam.lookAt(target);
 makeOrbit();
 let camTween = null;
 function goView(name) {
-  const to = VIEWS[name];
+  currentView = name;
+  const to = viewPos(name);
   const from = { x: cam.position.x, y: cam.position.y, z: cam.position.z };
-  orbit.destroy();
+  if (orbit) orbit.destroy(); // null while a previous move is still running
   orbit = null;
   camTween = { from, to, t: 0 };
   document.querySelectorAll('#views button').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
@@ -272,6 +299,7 @@ view.on('pointerdown', (e) => downAt.copyFrom(e.global));
 function onTap(i, e) {
   if (e.button !== 0) return;
   if (Math.hypot(e.global.x - downAt.x, e.global.y - downAt.y) > 7) return;
+  lastTap = { i, fdi: fdi(i), tab: state.tab };
   if (state.tab === 'case') {
     state.missing[i] = !state.missing[i];
     document.querySelectorAll('#presets button').forEach((b) => b.classList.remove('on'));
@@ -344,7 +372,9 @@ function applyTool(i) {
     return;
   }
   if (num <= 2) {
-    toast('Mandibular incisors make poor rest seats here. Use the canine or a premolar.');
+    toast(state.arch === 'maxillary'
+      ? 'Maxillary incisors make poor rest seats without a prepared restoration. Use the canine cingulum or a premolar.'
+      : 'Mandibular incisors make poor rest seats here. Use the canine or a premolar.');
     return;
   }
   const t = topo[i];
@@ -354,7 +384,9 @@ function applyTool(i) {
     if (!rests.length) comps.push({ type: 'rest', tooth: i, side: def });
     else if (rests.length === 1 && t.mSpan && t.dSpan) comps.push({ type: 'rest', tooth: i, side: rests[0].side === 'mesial' ? 'distal' : 'mesial' });
     else state.components = comps.filter((c) => !(c.tooth === i && c.type === 'rest'));
-    if (num === 3 && !rests.length) toast('Incisal rest on the canine (cingulum is weak on mandibular canines).');
+    if (num === 3 && !rests.length) toast(state.arch === 'maxillary'
+      ? 'Cingulum rest on the maxillary canine (prominent cingulum, close to the long axis).'
+      : 'Incisal rest on the canine (cingulum is weak on mandibular canines).');
   } else {
     if (num === 3 && tool !== 'rest') toast('Clasping a canine is possible, but check the aesthetics.');
     const existing = comps.find((c) => c.tooth === i && ['akers', 'rpi', 'ww'].includes(c.type));
@@ -431,16 +463,27 @@ document.querySelectorAll('#tools button').forEach((b) => (b.onclick = () => {
   $('#toolHint').textContent = TOOL_HINTS[state.tool];
 }));
 $('#toolHint').textContent = TOOL_HINTS.rest;
-document.querySelectorAll('#connectors button').forEach((b) => (b.onclick = () => {
-  state.connector = b.dataset.conn || null;
-  document.querySelectorAll('#connectors button').forEach((x) => x.classList.toggle('on', x === b));
-  rebuildDesign();
-}));
+function renderConnectorButtons() {
+  const el = $('#connectors');
+  const opts = [...CONNECTORS[state.arch], ['', 'None']];
+  el.innerHTML = '<span class="lbl">Major connector</span>' + opts.map(([id, name]) => `<button data-conn="${id}">${name}</button>`).join('');
+  el.querySelectorAll('button').forEach((b) => (b.onclick = () => {
+    state.connector = b.dataset.conn || null;
+    syncConnectorButtons();
+    rebuildDesign();
+  }));
+  syncConnectorButtons();
+  $('#sulcusRow').hidden = state.arch !== 'mandibular';
+}
+function syncConnectorButtons() {
+  document.querySelectorAll('#connectors button').forEach((x) => x.classList.toggle('on', (x.dataset.conn || null) === state.connector));
+}
+renderConnectorButtons();
 $('#sulcus').oninput = (e) => { state.sulcus = +e.target.value; $('#sulcusOut').textContent = `${state.sulcus} mm`; rebuildDesign(); };
 $('#suggest').onclick = () => {
   state.components = suggestDesign(state, { cls, topo });
-  state.connector = state.sulcus < 8 ? 'lingual-plate' : 'lingual-bar';
-  document.querySelectorAll('#connectors button').forEach((x) => x.classList.toggle('on', x.dataset.conn === state.connector));
+  state.connector = suggestConnector(state, { cls, topo });
+  syncConnectorButtons();
   rebuildDesign();
   toast('Textbook design placed. Open Check to see why each part is there.');
 };
@@ -472,6 +515,40 @@ document.querySelectorAll('#gauges button').forEach((b) => (b.onclick = () => {
 $('#showMap').onchange = (e) => { state.showMap = e.target.checked; resurvey(); };
 $('#showLines').onchange = (e) => { state.showLines = e.target.checked; resurvey(); };
 
+// ---------------- arch switch ----------------
+function switchArch(arch) {
+  if (arch === state.arch) return;
+  state.arch = arch;
+  setArch(arch);
+  // every cached mesh was built for the other arch
+  for (let i = 0; i < ARCH_LEN; i++) {
+    toothData[i] = null;
+    if (toothMeshes[i]) { toothMeshes[i].destroy(); toothMeshes[i] = null; }
+    if (ghostMeshes[i]) { ghostMeshes[i].destroy(); ghostMeshes[i] = null; }
+    fdiLabels[i]._t.text = fdi(i);
+  }
+  setGeo(baseMesh, buildBase());
+  state.components = [];
+  state.measure = null;
+  rod.visible = false;
+  $('#measureCard').textContent = 'Tap a tooth to measure.';
+  state.connector = arch === 'maxillary' ? 'ap-strap' : 'lingual-bar';
+  renderConnectorButtons();
+  document.querySelectorAll('#arches button').forEach((x) => x.classList.toggle('on', x.dataset.arch === arch));
+  $('#torusRow').hidden = arch !== 'maxillary';
+  $('#archSub').textContent = `${ARCH_LABEL[arch]} cast \u00b7 survey \u00b7 design \u00b7 check`;
+  rebuildCast();
+  goView(currentView);
+}
+document.querySelectorAll('#arches button').forEach((b) => (b.onclick = () => switchArch(b.dataset.arch)));
+function setTorus(t) {
+  state.torus = t;
+  PALATE.torus = t;
+  document.querySelectorAll('#torusRow button').forEach((x) => x.classList.toggle('on', x.dataset.torus === t));
+  rebuildCast();
+}
+document.querySelectorAll('#torusRow button').forEach((b) => (b.onclick = () => setTorus(b.dataset.torus)));
+
 document.querySelectorAll('#tabs button').forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
 function setTab(tab) {
   state.tab = tab;
@@ -491,24 +568,49 @@ const tmpP = new Point();
 const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 app.ticker.add((ticker) => {
   if (camTween) {
-    camTween.t = Math.min(1, camTween.t + ticker.deltaMS / 650);
+    // elapsedMS is uncapped, so the move takes 650 ms of real time even on a slow device
+    camTween.t = Math.min(1, camTween.t + Math.max(ticker.deltaMS, ticker.elapsedMS) / 650);
     const k = ease(camTween.t);
-    const f = camTween.from, t = camTween.to;
-    cam.position.set(f.x + (t.x - f.x) * k, f.y + (t.y - f.y) * k, f.z + (t.z - f.z) * k);
+    // move on a sphere round the target (swinging round the side, never over the top), so the
+    // maxillary occlusal view, which looks from behind the cast, turns smoothly
+    const sph = (p) => { const x = p.x - target.x, y = p.y - target.y, z = p.z - target.z; const r = Math.hypot(x, y, z); return { r, th: Math.atan2(x, z), ph: Math.acos(y / r) }; };
+    const a = sph(camTween.from), b = sph(camTween.to);
+    let dth = b.th - a.th;
+    if (dth > Math.PI) dth -= Math.PI * 2;
+    if (dth < -Math.PI) dth += Math.PI * 2;
+    if (Math.abs(Math.abs(dth) - Math.PI) < 1e-3) dth = Math.PI; // front to back: go round the patient's left
+    const ph = a.ph + (b.ph - a.ph) * k, th = a.th + dth * k, r = a.r + (b.r - a.r) * k;
+    const lift = Math.abs(dth) > 1.5 ? Math.sin(Math.PI * k) * 0.35 : 0; // a little lower mid-swing so it reads as a turn
+    cam.position.set(target.x + r * Math.sin(ph + lift) * Math.sin(th), target.y + r * Math.cos(ph + lift), target.z + r * Math.sin(ph + lift) * Math.cos(th));
     cam.lookAt(target);
     if (camTween.t >= 1) { camTween = null; makeOrbit(); }
   } else if (orbit) orbit.update(ticker);
 
-  // FDI labels (case + design)
+  // FDI labels (case tab). Nearest teeth are placed first; a label that would overlap one already
+  // placed is nudged up once, and hidden if it still collides (side views stack the far side).
   const showLabels = state.tab === 'case';
+  const order = [];
   for (let i = 0; i < ARCH_LEN; i++) {
-    const lab = fdiLabels[i];
     const fr = toothFrame(i);
     const p = tiltRotate(toCast(fr, v3(0, fr.spec.h + 3.2, 0)), state.ap, state.lat);
-    const s = view.worldToScreen(p, tmpP);
-    lab.visible = showLabels && !!s && (!state.missing[i] || state.tab === 'case');
+    const d = Math.hypot(p.x - cam.position.x, p.y - cam.position.y, p.z - cam.position.z);
+    order.push({ i, p, d });
+  }
+  order.sort((a, b) => a.d - b.d);
+  const placed = [];
+  const LW = 30, LH = 20;
+  const free = (x, y) => placed.every((q) => Math.abs(q.x - x) >= LW || Math.abs(q.y - y) >= LH);
+  for (const { i, p } of order) {
+    const lab = fdiLabels[i];
+    const s = showLabels ? view.worldToScreen(p, tmpP) : null;
+    lab.visible = false;
     if (s) {
-      lab.position.set(s.x + view.x, s.y + view.y);
+      let x = s.x + view.x, y = s.y + view.y;
+      if (!free(x, y)) y -= LH + 1;
+      if (!free(x, y) || y < 4 || y > VR.y + VR.h) continue;
+      placed.push({ x, y });
+      lab.visible = true;
+      lab.position.set(x, y);
       const missing = state.missing[i];
       const w = 28, h = 18;
       lab._bg.clear().roundRect(-w / 2 + 2, -h / 2 + 2, w, h, 7).fill(0x221d1f)
@@ -542,4 +644,19 @@ app.ticker.add((ticker) => {
 });
 
 rebuildCast();
-window.__rpd = { screenOf: (i) => { const fr = toothFrame(i); const p = view.worldToScreen(tiltRotate(toCast(fr, v3(0, fr.spec.h * 0.6, fr.spec.bl * 0.3)), state.ap, state.lat), new Point()); return p && { x: p.x, y: p.y }; }, state, get cls() { return cls; }, get check() { return check; }, setTab, goView, applyTool, rebuildDesign, suggest: () => $('#suggest').onclick() };
+// Test hooks. screenOf aims at the occlusal centre of the crown (the point no neighbour can hide in
+// the occlusal view; the old buccal aim point could sit behind the taller canine).
+window.__rpd = {
+  screenOf: (i, where = 'occlusal') => {
+    const fr = toothFrame(i);
+    const l = where === 'buccal' ? v3(0, fr.spec.h * 0.6, fr.spec.bl * 0.3) : v3(0, fr.spec.h + 0.2, 0);
+    const p = view.worldToScreen(tiltRotate(toCast(fr, l), state.ap, state.lat), new Point());
+    return p && { x: p.x + view.x, y: p.y + view.y };
+  },
+  state, get cls() { return cls; }, get check() { return check; }, get lastTap() { return lastTap; }, get fw() { return fw; },
+  get cam() { return { x: +cam.position.x.toFixed(1), y: +cam.position.y.toFixed(1), z: +cam.position.z.toFixed(1), tween: !!camTween, view: currentView }; },
+  fdi, setTab, goView, applyTool, rebuildDesign, setArch: switchArch, setTorus, suggest: () => $('#suggest').onclick(),
+  setTool: (t) => document.querySelector(`#tools button[data-tool="${t}"]`).onclick(),
+  snapView: (name) => { goView(name); camTween.t = 0.999; },
+  setConnector: (c) => { state.connector = c; syncConnectorButtons(); rebuildDesign(); },
+};

@@ -1,10 +1,15 @@
 // Kennedy classification of a partially edentulous arch, with Applegate's rules.
 // Arch positions in order from patient's right distal to left distal:
-// index 0..6  = right quadrant 7..1 (FDI 47..41 mandibular)
-// index 7..13 = left quadrant 1..7 (FDI 31..37)
+// index 0..6  = right quadrant 7..1 (FDI 47..41 mandibular, 17..11 maxillary)
+// index 7..13 = left quadrant 1..7 (FDI 31..37 mandibular, 21..27 maxillary)
 // Third molars are not modelled (Applegate rule 3: not considered unless used as abutments).
+// The classification itself is index-based, so it works the same for both arches.
 
 export const ARCH_LEN = 14;
+
+/** Which cast is loaded. Mutated in place by anatomy.setArch() so every module sees the change. */
+export const ARCH = { name: 'mandibular' };
+export const ARCH_LABEL = { mandibular: 'Mandibular', maxillary: 'Maxillary' };
 
 export function posInfo(i) {
   const right = i < 7;
@@ -12,7 +17,7 @@ export function posInfo(i) {
   return { right, num, side: right ? 'R' : 'L' };
 }
 
-export function fdi(i, arch = 'mandibular') {
+export function fdi(i, arch = ARCH.name) {
   const { right, num } = posInfo(i);
   const quad = arch === 'mandibular' ? (right ? 4 : 3) : right ? 1 : 2;
   return `${quad}${num}`;
